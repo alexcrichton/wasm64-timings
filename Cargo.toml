@@ -8,5 +8,6 @@ members = ['guest']
 
 [dependencies]
 anyhow = "1.0"
+wasmparser = "0.81"
 wasmtime = "0.31"
 wat = "1.0"
