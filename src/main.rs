@@ -54,7 +54,9 @@ fn main() -> Result<()> {
         &[(native_dur, "native"), (dur32, "wasm32")],
     );
 
-    // run the 64-bit wasm with default settings (always bounds-checked)
+    // run the 64-bit wasm with default settings. Our input wasm file should
+    // have a maximum size for memory listed which is <= 4gb so this should use
+    // a static memory (all memory accesses are still bounds-checked)
     let dur64 = run::<u64>(Config::new().wasm_memory64(true), wasm64, &input)?;
     print_time(
         "wasm64",
@@ -63,6 +65,26 @@ fn main() -> Result<()> {
             (native_dur, "native"),
             (dur32, "wasm32"),
             (dur32_bc, "wasm32-bc"),
+        ],
+    );
+
+    // run the 64-bit wasm forcing a dynamic memory to be used (all memory
+    // accesses are still bounds-checked)
+    let dur64_dyn = run::<u64>(
+        Config::new()
+            .wasm_memory64(true)
+            .static_memory_maximum_size(0),
+        wasm64,
+        &input,
+    )?;
+    print_time(
+        "wasm64-dyn",
+        dur64_dyn,
+        &[
+            (native_dur, "native"),
+            (dur32, "wasm32"),
+            (dur32_bc, "wasm32-bc"),
+            (dur64, "wasm64"),
         ],
     );
 
