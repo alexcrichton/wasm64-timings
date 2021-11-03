@@ -56,11 +56,19 @@ fn main() -> Result<()> {
             &input,
         )?
     };
-    print_time("wasm32-bc-ns", dur32_bc_ns, &[(native_dur, "native")]);
+    print_time(
+        "wasm32-bc-ns",
+        dur32_bc_ns,
+        &[(native_dur, "native"), (dur32, "wasm32")],
+    );
 
     // 32-bit, bounds checks, with spectre mitigations
     let dur32_bc = run::<u32>(Config::new().static_memory_maximum_size(0), wasm32, &input)?;
-    print_time("wasm32-bc", dur32_bc, &[(native_dur, "native")]);
+    print_time(
+        "wasm32-bc",
+        dur32_bc,
+        &[(native_dur, "native"), (dur32, "wasm32")],
+    );
 
     // 64-bit, bounds checks, no spectre mitigation, static heap
     let dur64_ns = unsafe {
@@ -72,7 +80,11 @@ fn main() -> Result<()> {
             &input,
         )?
     };
-    print_time("wasm64-ns", dur64_ns, &[(native_dur, "native")]);
+    print_time(
+        "wasm64-ns",
+        dur64_ns,
+        &[(native_dur, "native"), (dur32, "wasm32")],
+    );
 
     // 64-bit, bounds checks, no spectre mitigation, dynamic heap
     let dur64_dyn_ns = unsafe {
@@ -85,11 +97,27 @@ fn main() -> Result<()> {
             &input,
         )?
     };
-    print_time("wasm64-dyn-ns", dur64_dyn_ns, &[(native_dur, "native")]);
+    print_time(
+        "wasm64-dyn-ns",
+        dur64_dyn_ns,
+        &[
+            (native_dur, "native"),
+            (dur32, "wasm32"),
+            (dur64_ns, "wasm64-ns"),
+        ],
+    );
 
     // 64-bit, bounds checks, spectre mitigation, static heap
     let dur64 = run::<u64>(Config::new().wasm_memory64(true), wasm64, &input)?;
-    print_time("wasm64", dur64, &[(native_dur, "native")]);
+    print_time(
+        "wasm64",
+        dur64,
+        &[
+            (native_dur, "native"),
+            (dur32, "wasm32"),
+            (dur64_ns, "wasm64-ns"),
+        ],
+    );
 
     // 64-bit, bounds checks, spectre mitigation, dynamic heap
     let dur64_dyn = run::<u64>(
@@ -99,8 +127,15 @@ fn main() -> Result<()> {
         wasm64,
         &input,
     )?;
-    print_time("wasm64-dyn", dur64_dyn, &[(native_dur, "native")]);
-
+    print_time(
+        "wasm64-dyn",
+        dur64_dyn,
+        &[
+            (native_dur, "native"),
+            (dur32, "wasm32"),
+            (dur64_ns, "wasm64-ns"),
+        ],
+    );
     Ok(())
 }
 
