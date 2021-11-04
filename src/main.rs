@@ -83,7 +83,11 @@ fn main() -> Result<()> {
     print_time(
         "wasm64-ns",
         dur64_ns,
-        &[(native_dur, "native"), (dur32, "wasm32")],
+        &[
+            (native_dur, "native"),
+            (dur32, "wasm32"),
+            (dur32_bc_ns, "wasm32-bc-ns"),
+        ],
     );
 
     // 64-bit, bounds checks, no spectre mitigation, dynamic heap
