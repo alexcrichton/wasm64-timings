@@ -1,20 +1,18 @@
 const fs = require('fs');
-const wasmToValidate = fs.readFileSync(process.argv[2]);
+const input = fs.readFileSync(process.argv[2]);
 
 function run(name, file, to_ptr, from_ptr) {
   const m = new WebAssembly.Module(fs.readFileSync(file));
   const i = new WebAssembly.Instance(m);
-  const malloc = i.exports.malloc;
-  const free = i.exports.free;
-  const memory = i.exports.memory;
-  const validate = i.exports.validate;
+  const { malloc, free, memory, validate, wat2wasm, wasm_free } = i.exports;
 
   const now = performance.now();
-  const ptrlen = to_ptr(wasmToValidate.length);
+  const ptrlen = to_ptr(input.length);
   const ptr = malloc(ptrlen);
-  (new Uint8Array(memory.buffer)).set(wasmToValidate, from_ptr(ptr));
-  validate(ptr, ptrlen);
+  (new Uint8Array(memory.buffer)).set(input, from_ptr(ptr));
+  const obj = wat2wasm(ptr, ptrlen);
   free(ptr, ptrlen);
+  wasm_free(ptr);
   return performance.now() - now;
 }
 
