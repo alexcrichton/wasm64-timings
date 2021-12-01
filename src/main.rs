@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::env;
+use std::io::Write;
 use std::time::{Duration, Instant};
 use wasmtime::*;
 
@@ -14,27 +15,23 @@ fn main() -> Result<()> {
     let wasm32 = "target/wasm32-unknown-unknown/release/guest.wasm";
     let wasm64 = "target/wasm64-unknown-unknown/release/guest.wasm";
 
-    fn print_time(name: &str, dur: Duration, baselines: &[(Duration, &str)]) {
-        print!("{:>20} time: {:.02?} (", name, dur,);
-        for (i, (baseline, baseline_name)) in baselines.iter().enumerate() {
-            if i > 0 {
-                print!(", ");
-            }
-            let (neg, diff) = if dur > *baseline {
-                (false, dur - *baseline)
-            } else {
-                (true, *baseline - dur)
-            };
-            let pct = diff.as_nanos() as f64 / baseline.as_nanos() as f64;
-            print!(
-                "{}{:.02}% {}",
-                if neg { "-" } else { "+" },
-                pct * 100.,
-                baseline_name,
-            );
+    fn diff_pct(baseline: Duration, dur: Duration) -> f64 {
+        let (neg, diff) = if dur > baseline {
+            (false, dur - baseline)
+        } else {
+            (true, baseline - dur)
+        };
+        let pct = (diff.as_nanos() as f64 / baseline.as_nanos() as f64) * 100.0;
+        if neg {
+            -pct
+        } else {
+            pct
         }
-        println!(")");
     }
+
+    // run the 32-bit wasm with default wasmtime settings (aka no bounds checks)
+    let dur32 = run::<u32>(&Config::new(), wasm32, &input)?;
+    println!("baseline wasm32: {:.02?}", dur32);
 
     // run the benchmark natively
     let native_dur = {
@@ -46,107 +43,107 @@ fn main() -> Result<()> {
         }
         start.elapsed()
     };
-    print_time("native", native_dur, &[]);
+    println!(
+        "         native: {:.02}% ({:.02?})",
+        diff_pct(dur32, native_dur),
+        native_dur,
+    );
 
-    // run the 32-bit wasm with default wasmtime settings (aka no bounds checks)
-    let dur32 = run::<u32>(&Config::new(), wasm32, &input)?;
-    print_time("wasm32", dur32, &[(native_dur, "native")]);
+    const WIDTH: usize = 15;
 
-    // 32-bit, bounds-checks, no spectre mitigation
-    let dur32_bc_ns = unsafe {
-        run::<u32>(
-            Config::new()
-                .static_memory_maximum_size(0)
-                .cranelift_flag_set("enable_heap_access_spectre_mitigation", "false")?,
-            wasm32,
-            &input,
-        )?
+    let configs = configs();
+
+    let print_header = || {
+        print!("|        |");
+        for (name, _) in configs.iter() {
+            print!(" {:1$} |", name, WIDTH);
+        }
+        println!();
+        print!("|--------|");
+        for _ in 0..configs.len() {
+            print!("{:-<1$}|", "-", WIDTH + 2);
+        }
+        println!();
     };
-    print_time(
-        "wasm32-bc-ns",
-        dur32_bc_ns,
-        &[(native_dur, "native"), (dur32, "wasm32")],
-    );
 
-    // 32-bit, bounds checks, with spectre mitigations
-    let dur32_bc = run::<u32>(Config::new().static_memory_maximum_size(0), wasm32, &input)?;
-    print_time(
-        "wasm32-bc",
-        dur32_bc,
-        &[(native_dur, "native"), (dur32, "wasm32")],
-    );
+    println!("\n------ bounds checks timings relative to wasm32 baseline ------\n");
+    print_header();
+    let mut timings = Vec::new();
+    print!("| wasm32 |");
+    std::io::stdout().flush()?;
+    for (_, config) in configs.iter() {
+        let dur = run::<u32>(config, wasm32, &input)?;
+        print!("{:>+1$.02}% |", diff_pct(dur32, dur), WIDTH);
+        std::io::stdout().flush()?;
+        timings.push(dur);
+    }
+    println!();
+    print!("| wasm64 |");
+    std::io::stdout().flush()?;
+    for (_, config) in configs.iter() {
+        let dur = run::<u64>(config, wasm64, &input)?;
+        print!("{:>+1$.02}% |", diff_pct(dur32, dur), WIDTH);
+        std::io::stdout().flush()?;
+        timings.push(dur);
+    }
+    println!();
+    println!();
+    println!();
 
-    // 64-bit, bounds checks, no spectre mitigation, static heap
-    let dur64_ns = unsafe {
-        run::<u64>(
-            Config::new()
-                .wasm_memory64(true)
-                .cranelift_flag_set("enable_heap_access_spectre_mitigation", "false")?,
-            wasm64,
-            &input,
-        )?
-    };
-    print_time(
-        "wasm64-ns",
-        dur64_ns,
-        &[
-            (native_dur, "native"),
-            (dur32, "wasm32"),
-            (dur32_bc_ns, "wasm32-bc-ns"),
-        ],
-    );
+    println!("\n------ bounds checks timings ------\n");
+    print_header();
+    let mut timings = timings.iter();
+    print!("| wasm32 |");
+    for _ in 0..configs.len() {
+        let dur = timings.next().unwrap();
+        print!("{:>1$} |", format!("{:.02?}", dur), WIDTH + 1);
+    }
+    println!();
+    print!("| wasm64 |");
+    for _ in 0..configs.len() {
+        let dur = timings.next().unwrap();
+        print!("{:>1$} |", format!("{:.02?}", dur), WIDTH + 1);
+    }
+    println!();
 
-    // 64-bit, bounds checks, no spectre mitigation, dynamic heap
-    let dur64_dyn_ns = unsafe {
-        run::<u64>(
-            Config::new()
-                .wasm_memory64(true)
-                .cranelift_flag_set("enable_heap_access_spectre_mitigation", "false")?
-                .static_memory_maximum_size(0),
-            wasm64,
-            &input,
-        )?
-    };
-    print_time(
-        "wasm64-dyn-ns",
-        dur64_dyn_ns,
-        &[
-            (native_dur, "native"),
-            (dur32, "wasm32"),
-            (dur64_ns, "wasm64-ns"),
-        ],
-    );
-
-    // 64-bit, bounds checks, spectre mitigation, static heap
-    let dur64 = run::<u64>(Config::new().wasm_memory64(true), wasm64, &input)?;
-    print_time(
-        "wasm64",
-        dur64,
-        &[
-            (native_dur, "native"),
-            (dur32, "wasm32"),
-            (dur64_ns, "wasm64-ns"),
-        ],
-    );
-
-    // 64-bit, bounds checks, spectre mitigation, dynamic heap
-    let dur64_dyn = run::<u64>(
-        Config::new()
-            .wasm_memory64(true)
-            .static_memory_maximum_size(0),
-        wasm64,
-        &input,
-    )?;
-    print_time(
-        "wasm64-dyn",
-        dur64_dyn,
-        &[
-            (native_dur, "native"),
-            (dur32, "wasm32"),
-            (dur64_ns, "wasm64-ns"),
-        ],
-    );
     Ok(())
+}
+
+fn configs() -> Vec<(&'static str, Config)> {
+    let mut configs = Vec::new();
+    let mut base = Config::new();
+    base.wasm_memory64(true);
+    unsafe {
+        configs.push((
+            "static",
+            base.clone()
+                .static_memory_maximum_size(2 << 30)
+                .static_memory_forced(true)
+                .cranelift_flag_set("enable_heap_access_spectre_mitigation", "false")
+                .unwrap()
+                .clone(),
+        ));
+        configs.push((
+            "dynamic",
+            base.clone()
+                .static_memory_maximum_size(0)
+                .cranelift_flag_set("enable_heap_access_spectre_mitigation", "false")
+                .unwrap()
+                .clone(),
+        ));
+        configs.push((
+            "static-spectre",
+            base.clone()
+                .static_memory_maximum_size(2 << 30)
+                .static_memory_forced(true)
+                .clone(),
+        ));
+        configs.push((
+            "dynamic-spectre",
+            base.clone().static_memory_maximum_size(0).clone(),
+        ));
+    }
+    configs
 }
 
 fn run<T>(config: &Config, file: &str, input: &[u8]) -> Result<Duration>
@@ -187,9 +184,10 @@ where
         let ret_ptr = wasm_ptr.call(&mut store, wasm_obj)?;
         let ret_len = wasm_len.call(&mut store, wasm_obj)?;
 
-        // let wasm =
-        //     mem.data(&store)[ret_ptr.try_into().unwrap()..][..ret_len.try_into().unwrap()].to_vec();
+        let wasm =
+            mem.data(&store)[ret_ptr.try_into().unwrap()..][..ret_len.try_into().unwrap()].to_vec();
         wasm_free.call(&mut store, wasm_obj)?;
+        drop(wasm); // TODO: verify against native
         Ok(start.elapsed())
     }
 }

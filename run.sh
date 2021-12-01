@@ -1,9 +1,18 @@
 set -ex
-RUSTFLAGS=-Clink-args=--max-memory=3221225472 \
-  cargo +nightly build -p guest -Z build-std=panic_abort,std --target wasm64-unknown-unknown --release
 
-# RUSTC=$HOME/code/rust/build/aarch64-unknown-linux-gnu/stage1/bin/rustc \
-#   cargo +nightly build -p guest --target wasm64-unknown-unknown --release
-cargo build -p guest --target wasm32-unknown-unknown --release
+build_guest() {
+  # use `-Zbuild-std` to get the wasm64 target primarily, otherwise just
+  # build the guest in the same mode.
+  #
+  # Note that the `-Z` flag here is an attempt to fix an otherwise
+  # seemingly infinite loop in LLVM optimizations. Unsure what's happening
+  # there.
+  RUSTFLAGS=-Znew-llvm-pass-manager=no \
+  cargo +nightly build -p guest -Z build-std=panic_abort,std --release "$@"
+}
+
+build_guest --target wasm64-unknown-unknown
+build_guest --target wasm32-unknown-unknown
+
 cargo run --release -- "$@"
 #node --experimental-wasm-memory64 run.js "$@"
